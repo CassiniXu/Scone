@@ -70,6 +70,15 @@ class dataloader():
         self.test_his = test_his
         self.test_ini_env = test_ini_env
 
+    def train_loader(self):
+        return self.train_dataloader
+    
+    def dev_data(self):
+        return self.dev_ins, self.dev_his, self.dev_ini_env
+    
+    def test_data(self):
+        return self.test_ins, self.test_his, self.test_ini_env
+
     def process_non_train_ins(self, ins, his, ini_env):
         import torch
         ins = self.replace_with_id(ins)

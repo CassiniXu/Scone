@@ -199,12 +199,11 @@ class dataloader():
         return cooked_data
     
     def construct_dataloader(self, ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act):
-        from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+        from torch.utils.data import TensorDataset, DataLoader, RandomSampler
         train_data = TensorDataset(ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader
-
 
 if __name__ == "__main__":
     train = "train.json"

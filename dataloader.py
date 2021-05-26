@@ -21,8 +21,8 @@ class dataloader():
         self.batch_size = 32
         instructions, his_instructions, actions, initial_environments, environments, identifiers = self.load_data(self.train)
         self.construct_vocab(actions, instructions, num_filter)
-        dev_ins, dev_his, _, dev_ini_env, _ = self.load_data(self.dev)
-        test_ins, test_his, _, test_ini_env, _ = self.load_data(self.test)
+        dev_ins, dev_his, _, dev_ini_env, _, _ = self.load_data(self.dev)
+        test_ins, test_his, _, test_ini_env, _, _ = self.load_data(self.test)
 
         """
         prepare for training data
@@ -50,6 +50,9 @@ class dataloader():
         environments = self.process_world_state(environments)
         initial_environments = self.replace_world_state(initial_environments)
         environments = self.replace_world_state(environments)
+        initial_environments = torch.tensor(initial_environments, dtype=torch.long)
+        environments = torch.tensor(environments, dtype=torch.long)
+        
         train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length)
 
         """
@@ -59,7 +62,13 @@ class dataloader():
         test_ins, test_his, test_ini_env = self.process_non_train_ins(test_ins, test_his, test_ini_env)
         
         # return
-        return train_dataloader, (dev_ins, dev_his, dev_ini_env), (test_ins, test_his, test_ini_env)
+        self.train_dataloader = train_dataloader
+        self.dev_ins = dev_ins
+        self.dev_his = dev_his
+        self.dev_ini_env = dev_ini_env
+        self.test_ins = test_ins
+        self.test_his = test_his
+        self.test_ini_env = test_ini_env
 
     def process_non_train_ins(self, ins, his, ini_env):
         import torch
@@ -85,7 +94,7 @@ class dataloader():
                 if j >= "0" and j <= "9":
                     single_world_state.append(int(j))
                 else:
-                    single_world_state.append(color_to_id[j])
+                    single_world_state.extend([color_to_id[t] for t in j])
             splitted_world_state.append(single_world_state)
         return splitted_world_state
 
@@ -96,8 +105,8 @@ class dataloader():
             single_ws = []
             for j in ws:
                 pos_color = j.split(":")
-                pos = pos_color[0]
-                beaker_color = pos_color[1:] + ["_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1:]))]
+                pos = [pos_color[0]]
+                beaker_color = [pos_color[1] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))]
                 single_ws = single_ws + pos + beaker_color
             process_world_state.append(single_ws)
         return process_world_state
@@ -124,7 +133,7 @@ class dataloader():
         sorted_actions = sorted(set(actions_counter))
         actions_to_id = {}
         id_to_actions = {}
-        for index, token in enumerate(sorted):
+        for index, token in enumerate(sorted_actions):
             actions_to_id[token] = index + 1
             id_to_actions[index + 1] = token
         actions_to_id[PAD] = 0
@@ -150,12 +159,12 @@ class dataloader():
         identifiers = [[i["identifier"]] * len(i["utterances"]) for i in X]
         identifiers = [id + "-" + str(j) for item in identifiers for j, id in enumerate(item)]
         history_instructions = self.construct_history_instructions(instructions)
-        return instructions, his_instructions, actions, initial_environments, environments, identifiers
+        return instructions, history_instructions, actions, initial_environments, environments, identifiers
     
     def construct_history_instructions(self, instructions):
         history_ins = []
         his = []
-        for i in instructions:
+        for i in range(len(instructions)):
             if i % NUM_SEQUENCE == 0:
                 his = []
             else:
@@ -166,12 +175,14 @@ class dataloader():
     def padding(self, unpadded_data):
         valid_length = [len(i) for i in unpadded_data]
         from torch.nn.utils.rnn import pad_sequence
+        import torch
+        unpadded_data = [torch.tensor(i, dtype=torch.long) for i in unpadded_data]
         padded_data = pad_sequence(unpadded_data, batch_first = True)
         return padded_data, valid_length
 
     def replace_with_id(self, raw_data, is_instructions = True):
         if is_instructions:
-            dic = self.self.instructions_to_id
+            dic = self.instructions_to_id
         else:
             dic = self.actions_to_id
         
@@ -184,3 +195,10 @@ class dataloader():
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader
+
+
+if __name__ == "__main__":
+    train = "train.json"
+    dev = "dev.json"
+    test = "test_leaderboard.json"
+    DL = dataloader(train, dev, test)

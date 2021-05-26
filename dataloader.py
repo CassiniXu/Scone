@@ -7,10 +7,10 @@ PAD = "<PAD>"
 START = "<START>"
 NUM_SEQUENCE = 5
 NUM_CHEMICAL_LAYERS = 4
-
 color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
+
 class dataloader():
-    def __init__(self, train, dev, test, batch_size = 32, num_filter=10):
+    def __init__(self, train, dev, test, batch_size = 32, num_filter = 10):
         import torch
         self.instructions_to_id = None
         self.actions_to_id = None
@@ -50,9 +50,32 @@ class dataloader():
         environments = self.process_world_state(environments)
         initial_environments = self.replace_world_state(initial_environments)
         environments = self.replace_world_state(environments)
-        self.train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length)
-        
+        train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length)
 
+        """
+        process dev and test data
+        """
+        dev_ins, dev_his, dev_ini_env = self.process_non_train_ins(dev_ins, dev_his, dev_ini_env)
+        test_ins, test_his, test_ini_env = self.process_non_train_ins(test_ins, test_his, test_ini_env)
+        
+        # return
+        return train_dataloader, (dev_ins, dev_his, dev_ini_env), (test_ins, test_his, test_ini_env)
+
+    def process_non_train_ins(self, ins, his, ini_env):
+        import torch
+        ins = self.replace_with_id(ins)
+        his = self.replace_with_id(his)
+        ini_env = self.process_world_state(ini_env)
+        ini_env = self.replace_world_state(ini_env)
+        data_length = len(ins)
+        for i in range(data_length):
+            ins[i] = torch.tensor([ins[i]], dtype=torch.long)
+            ini_env[i] = torch.tensor([ini_env[i]], dtype=torch.long)
+            if i % NUM_SEQUENCE == 0:
+                his[i] = torch.tensor([[0]], dtype=torch.long)
+            else:
+                his[i] = torch.tensor([his[i]], dtype=torch.long)
+        return ins, his, ini_env
 
     def replace_world_state(self, world_state):
         splitted_world_state = []
@@ -74,7 +97,7 @@ class dataloader():
             for j in ws:
                 pos_color = j.split(":")
                 pos = pos_color[0]
-                beaker_color = pos_color[1:] + ["_" * (4 - len(pos_color[1:]))]
+                beaker_color = pos_color[1:] + ["_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1:]))]
                 single_ws = single_ws + pos + beaker_color
             process_world_state.append(single_ws)
         return process_world_state
@@ -161,6 +184,3 @@ class dataloader():
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader
-
-
-

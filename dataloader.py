@@ -6,9 +6,11 @@ UNKNOWN = "<UNKNOWN>"
 PAD = "<PAD>"
 START = "<START>"
 NUM_SEQUENCE = 5
+NUM_CHEMICAL_LAYERS = 4
 
+color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
 class dataloader():
-    def __init__(self, train, dev, test, num_filter=10):
+    def __init__(self, train, dev, test, batch_size = 32, num_filter=10):
         import torch
         self.instructions_to_id = None
         self.actions_to_id = None
@@ -16,11 +18,15 @@ class dataloader():
         self.train = train
         self.dev = dev
         self.test = test
+        self.batch_size = 32
         instructions, his_instructions, actions, initial_environments, environments, identifiers = self.load_data(self.train)
         self.construct_vocab(actions, instructions, num_filter)
         dev_ins, dev_his, _, dev_ini_env, _ = self.load_data(self.dev)
         test_ins, test_his, _, test_ini_env, _ = self.load_data(self.test)
 
+        """
+        prepare for training data
+        """
         # replace with id
         train_id = self.replace_with_id(instructions)
         train_his_id = self.replace_with_id(his_instructions)
@@ -39,8 +45,39 @@ class dataloader():
         act_id_pad = torch.tensor(act_id_pad, dtype=torch.long)
         act_valid_length = torch.tensor(act_valid_length, dtype=torch.long)
 
+        # process and replace world state
+        initial_environments = self.process_world_state(initial_environments)
+        environments = self.process_world_state(environments)
+        initial_environments = self.replace_world_state(initial_environments)
+        environments = self.replace_world_state(environments)
+        self.train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length)
+        
 
 
+    def replace_world_state(self, world_state):
+        splitted_world_state = []
+        for i in world_state:
+            single_world_state = []
+            for j in i:
+                if j >= "0" and j <= "9":
+                    single_world_state.append(int(j))
+                else:
+                    single_world_state.append(color_to_id[j])
+            splitted_world_state.append(single_world_state)
+        return splitted_world_state
+
+    def process_world_state(self, world_state):
+        process_world_state = []
+        for i in world_state:
+            ws = i.split(" ")
+            single_ws = []
+            for j in ws:
+                pos_color = j.split(":")
+                pos = pos_color[0]
+                beaker_color = pos_color[1:] + ["_" * (4 - len(pos_color[1:]))]
+                single_ws = single_ws + pos + beaker_color
+            process_world_state.append(single_ws)
+        return process_world_state
 
     def construct_vocab(self, actions, instructions, num_filter):
         from collections import Counter
@@ -118,6 +155,12 @@ class dataloader():
         cooked_data = [[dic[token] if token in dic.keys() else dic[UNKNOWN] for token in line] for line in raw_data]
         return cooked_data
     
-    def construct_dataloader(self, )
+    def construct_dataloader(self, ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act):
+        from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+        train_data = TensorDataset(ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
+        train_sampler = RandomSampler(train_data)
+        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
+        return train_dataloader
+
 
 

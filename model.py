@@ -80,3 +80,73 @@ class world_state_encoder(nn.Module):
         all_colors = all_colors.to(device)
         context = torch.cat((beaker_id, all_colors), dim=2)
         return context
+
+
+class instruction_encoder(nn.Module):
+    def __init__(self, vocab_size, hidden_size=100, embedded_size=50, num_layers=1, bidirectional=True):
+        super(instruction_encoder, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embedded_size, padding_idx=0)
+        self.lstm = nn.LSTM(embedded_size, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=bidirectional)
+    
+    def forward(self, X, valid_length):
+        from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
+        X = self.embedding(X)
+        X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
+        packed_output, (_, _) = self.lstm(X)
+        output, input_sizes = pad_packed_sequence(packed_output, batch_first=True)
+        return output
+
+class attention_action_decoder(nn.Module):
+    def __init__(self, action_size, input_size, ins_hidden_size, hidden_size, embedding_size, env_dim, num_layers=1):
+        super(attention_action_decoder, self).__init__()
+        self.embedding = nn.Embedding(action_size, embedding_size, padding_idx=0)
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+        self.hidden_to_action = nn.Linear(hidden_size, acton_size)
+        nn.init.xavier_uniform_(self.hidden_to_action.weight)
+        # init W for h_i, W, h^q
+        self.W_c = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, hidden_size)))
+        self.W_p = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, 2 * ins_hidden_size + hidden_size)))
+        self.W_s_b_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_b_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_c_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_c_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+
+        # weight matrix for lstm input
+        W_d_dim = 4 * env_dim + 4 * ins_hidden_size + embedding_size
+
+        self.W_b_d = nn.Linear(W_d_dim, input_size)
+        nn.init.xavier_uniform_(self.W_b_d.weight)
+    
+    def attend(self, H, query, weight):
+        query = query.to(device)
+        weight = weight.to(device)
+        alpha = torch.matmul(H, weight)
+        extend_query = (query.reshape((query.shape[0], 1, query.shape[1]))).repeat(1, alpha.shape[1], 1)
+        alpha = torch.einsum('ijk, ijk -> ijk', [alpha, extend_query])
+        alpha = alpha.sum(-1)
+        alpha = torch.nn.Softmax(1)(alpha)
+        alpha = torch.reshape(alpha, (alpha.shape[0], alpha.shape[1], 1))
+        alpha = alpha.repeat((1, 1, H.shape[2]))
+        z = torch.einsum('ijk, ijk -> ijk', [alpha, H])
+        z = z.sum(1)
+        return z
+    
+    def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
+        from torch
+
+
+        
+
+def main():
+    train = "train.json"
+    dev = "dev.json"
+    test = "test_leaderboard.json"
+    DL = dataloader(train, dev, test)
+    train_loader = DL.train_loader() # 
+
+    # ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
+    
+
+
+if __name__ == "__main__":
+    main()

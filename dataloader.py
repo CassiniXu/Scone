@@ -32,18 +32,29 @@ class dataloader():
         train_his_id = self.replace_with_id(his_instructions)
         act_id = self.replace_with_id(actions, False)
 
+
+        act_id, ground_act_id = self.construct_act(act_id)
+
+
+
         # padding
         train_id_pad, train_valid_length = self.padding(train_id)
         train_his_id_pad, train_his_valid_length = self.padding(train_his_id)
         act_id_pad, act_valid_length = self.padding(act_id)
+        ground_act_id_pad, ground_act_id_pad_valid_length = self.padding(ground_act_id)
 
         # to tensor
         train_id_pad = torch.tensor(train_id_pad,  dtype=torch.long)
         train_his_id_pad = torch.tensor(train_his_id_pad,  dtype=torch.long)
         train_valid_length = torch.tensor(train_valid_length, dtype=torch.long)
         train_his_valid_length = torch.tensor(train_his_valid_length, dtype=torch.long)
+
+
         act_id_pad = torch.tensor(act_id_pad, dtype=torch.long)
         act_valid_length = torch.tensor(act_valid_length, dtype=torch.long)
+
+        ground_act_id_pad = torch.tensor(ground_act_id_pad, dtype=torch.long)
+        ground_act_id_pad_valid_length = torch.tensor(ground_act_id_pad_valid_length, dtype=torch.long)
 
         # process and replace world state
         initial_environments = self.process_world_state(initial_environments)
@@ -52,8 +63,8 @@ class dataloader():
         environments = self.replace_world_state(environments)
         initial_environments = torch.tensor(initial_environments, dtype=torch.long)
         environments = torch.tensor(environments, dtype=torch.long)
-        
-        train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length)
+
+        train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length, ground_act_id_pad, ground_act_id_pad_valid_length)
 
         """
         process dev and test data
@@ -69,6 +80,15 @@ class dataloader():
         self.test_ins = test_ins
         self.test_his = test_his
         self.test_ini_env = test_ini_env
+
+    def construct_act(self, act):
+        input_act = []
+        ground_act = []
+        for i in range(len(act)):
+            for j in range(len(act[i] - 1)):
+                input_act.append(act[i][j])
+                ground_act.append(act[i][j+1])
+        return input_act, ground_act
 
     def train_loader(self):
         return self.train_dataloader
@@ -198,9 +218,9 @@ class dataloader():
         cooked_data = [[dic[token] if token in dic.keys() else dic[UNKNOWN] for token in line] for line in raw_data]
         return cooked_data
     
-    def construct_dataloader(self, ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act):
+    def construct_dataloader(self, ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         from torch.utils.data import TensorDataset, DataLoader, RandomSampler
-        train_data = TensorDataset(ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
+        train_data = TensorDataset(ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader

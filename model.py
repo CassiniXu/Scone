@@ -219,7 +219,9 @@ class Seq2Seq(nn.Module):
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         for i in range(epoch):
             avg_loss = 0
+            batch_count = 0
             for step, batch in enumerate(dl):
+                batch_count += 1
                 batch = tuple(t.to(device) for t in batch)
                 ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, y_true, y_true_valid = batch
                 optimizer.zero_grad()
@@ -230,12 +232,12 @@ class Seq2Seq(nn.Module):
                 pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, ins_valid, teacher_force=True)
                 l = loss_function(pred, y_true.to(device), y_true_valid)
                 l.sum().backward()
-                if step % 200 == 0:
+                if step % 20 == 0:
                     print("batch_loss:", l.sum().item() / batch_size)
-                avg_loss = avg_loss + l.sum()
+                avg_loss = avg_loss + l.sum().item() / batch_size
                 optimizer.step()
             print("loss at epoch " + str(i) + ":")
-            print((avg_loss / data_len).item())
+            print((avg_loss / batch_count).item())
 
 def main():
     train = "train.json"

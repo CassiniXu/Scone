@@ -27,12 +27,11 @@ class dataloader():
         """
         prepare for training data
         """
+
         # replace with id
         train_id = self.replace_with_id(instructions)
         train_his_id = self.replace_with_id(his_instructions)
         act_id = self.replace_with_id(actions, False)
-
-
         act_id, ground_act_id = self.construct_act(act_id)
 
 
@@ -85,9 +84,13 @@ class dataloader():
         input_act = []
         ground_act = []
         for i in range(len(act)):
-            for j in range(len(act[i] - 1)):
-                input_act.append(act[i][j])
-                ground_act.append(act[i][j+1])
+            t_input_act = []
+            t_ground_act = []
+            for j in range(len(act[i]) - 1):
+                t_input_act.append(act[i][j])
+                t_ground_act.append(act[i][j+1])
+            input_act.append(t_input_act)
+            ground_act.append(t_ground_act)
         return input_act, ground_act
 
     def train_loader(self):
@@ -218,9 +221,9 @@ class dataloader():
         cooked_data = [[dic[token] if token in dic.keys() else dic[UNKNOWN] for token in line] for line in raw_data]
         return cooked_data
     
-    def construct_dataloader(self, ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
+    def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         from torch.utils.data import TensorDataset, DataLoader, RandomSampler
-        train_data = TensorDataset(ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length)
+        train_data = TensorDataset(ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader

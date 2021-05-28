@@ -11,6 +11,7 @@ from fsa import ExecutionFSA, EOS, ACTION_SEP, NO_ARG
 
 from alchemy_fsa import AlchemyFSA
 from alchemy_world_state import AlchemyWorldState
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -84,6 +85,8 @@ class instruction_encoder(nn.Module):
     
     def forward(self, X, valid_length):
         from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
+        print(X)
+        print(X.shape)
         X = self.embedding(X)
         X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
         packed_output, (_, _) = self.lstm(X)
@@ -95,7 +98,7 @@ class attention_action_decoder(nn.Module):
         super(attention_action_decoder, self).__init__()
         self.embedding = nn.Embedding(action_size, embedding_size, padding_idx=0)
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers=num_layers, batch_first=True)
-        self.hidden_to_action = nn.Linear(hidden_size, acton_size)
+        self.hidden_to_action = nn.Linear(hidden_size, action_size)
         nn.init.xavier_uniform_(self.hidden_to_action.weight)
         # init W for h_i, W, h^q
         self.W_c = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, hidden_size)))
@@ -219,16 +222,21 @@ class Seq2Seq(nn.Module):
         for i in range(epoch):
             for step, batch in enumerate(dl):
                 batch = tuple(t.to(device) for t in batch)
-                ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act = batch
+                ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, y_true, y_true_valid = batch
                 optimizer.zero_grad()
                 ins_out = self.encoder(ins, ins_valid)
-                his_out = self.encoder(his, his_valid)
+                his_out = self.encoder(his_ins, his_valid)
                 ini_env_context = self.env_encoder(ini_env)
                 current_env_context = self.env_encoder(current_env)
                 pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, ins_valid, teacher_force=True)
-                l = loss_function(pred, y_true.to(device), valid_length)
-
-
+                l = loss_function(pred, y_true.to(device), y_true_valid)
+                l.sum().backward()
+                if step % 200 == 0:
+                    print("batch_loss:", l.sum().item() / batch_size)
+                avg_loss = avg_loss + l.sum()
+                optimizer.step()
+            print("loss at epoch " + str(i) + ":")
+            print((avg_loss / data_len).item())
 
 def main():
     train = "train.json"

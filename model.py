@@ -237,7 +237,13 @@ class Seq2Seq(nn.Module):
                 avg_loss = avg_loss + l.sum().item() / batch_size
                 optimizer.step()
             print("loss at epoch " + str(i) + ":")
-            print((avg_loss / batch_count).item())
+            print(avg_loss / batch_count)
+    
+    # def predict(self, dl):
+
+
+# def save_output(result):
+
 
 def main():
     train = "train.json"
@@ -271,8 +277,7 @@ def main():
     epoch = 10
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
-
-    
+    # dev_pred = model.predict()
 
 
 if __name__ == "__main__":

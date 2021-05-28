@@ -220,17 +220,23 @@ class Seq2Seq(nn.Module):
             for step, batch in enumerate(dl):
                 batch = tuple(t.to(device) for t in batch)
                 ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act = batch
-                
+                optimizer.zero_grad()
+                ins_out = self.encoder(ins, ins_valid)
+                his_out = self.encoder(his, his_valid)
+                ini_env_context = self.env_encoder(ini_env)
+                current_env_context = self.env_encoder(current_env)
+                pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, ins_valid, teacher_force=True)
+                l = loss_function(pred, y_true.to(device), valid_length)
 
 
-
-        
 
 def main():
     train = "train.json"
     dev = "dev.json"
     test = "test_leaderboard.json"
-    DL = dataloader(train, dev, test)
+    batch_size = 32
+    num_filter = 10
+    DL = dataloader(train, dev, test, batch_size, num_filter)
     train_loader = DL.train_loader()
 
     vocab_size = len(DL.instruction_vocab)
@@ -242,12 +248,21 @@ def main():
     ins_num_lstm_layers = 1
 
     # world state encoder setting
-    ws_pos_embedding_size = 10
+    pos_embedding_size = 10
+    color_embedding_size = 10
+    color_hidden_size = 20
 
+    # action setting
+    act_embedding_size = 50
+    act_input_size = 100
+    act_hidden_size = 100
 
-    # vocab_size, hidden_size=100, embedded_size=50, num_layers=1, bidirectional=True):
+    model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
+    model.to(device)
+    epoch = 10
+    learning_rate = 0.001
+    model.train(train_loader, batch_size, epoch, learning_rate)
 
-    # ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
     
 
 

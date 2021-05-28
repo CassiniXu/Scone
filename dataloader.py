@@ -185,7 +185,7 @@ class dataloader():
 
         # chain data
         environments = [j for i in environments for j in i]
-        instructions = [j[0].split() for i in instructions for j in i]
+        instructions = [j.split() for i in instructions for j in i]
         actions = [[START] + j + [EOS] for i in actions for j in i]
         initial_environments = [j for i in initial_environments for j in i]
         identifiers = [[i["identifier"]] * len(i["utterances"]) for i in X]
@@ -198,7 +198,9 @@ class dataloader():
         his = []
         for i in range(len(instructions)):
             if i % NUM_SEQUENCE == 0:
-                his = []
+                his = [0]
+            elif i % NUM_SEQUENCE == 1:
+                his = instructions[i-1]
             else:
                 his = his + instructions[i-1]
             history_ins.append(his)

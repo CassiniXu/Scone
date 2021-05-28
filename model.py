@@ -69,24 +69,23 @@ class world_state_encoder(nn.Module):
         for i in range(batch_size):
             colors = None
             for j in range(0, X.shape[1], 5):
-                _, (encoded_color, _) = self.lstm(self.color_embedding(X[i][j+1:j+5]).reshape((1, -1)))
-                colors = all_colors if j == 0 else torch.cat((colors, encoded_color), dim=1)
+                processed_color = self.color_embedding(X[i][j+1:j+5]).reshape((1, 4, -1))
+                _, (encoded_color, _) = self.lstm(processed_color)
+                colors = encoded_color if j == 0 else torch.cat((colors, encoded_color), dim=1)
             all_colors = colors if i == 0 else torch.cat((all_colors, colors), dim=0)
         all_colors = all_colors.to(device)
         context = torch.cat((beaker_id, all_colors), dim=2)
+        context = torch.reshape(context, (batch_size, -1))
         return context
-
 
 class instruction_encoder(nn.Module):
     def __init__(self, vocab_size, hidden_size=100, embedded_size=50, num_layers=1, bidirectional=True):
         super(instruction_encoder, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embedded_size, padding_idx=0)
         self.lstm = nn.LSTM(embedded_size, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=bidirectional)
-    
+
     def forward(self, X, valid_length):
         from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
-        print(X)
-        print(X.shape)
         X = self.embedding(X)
         X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
         packed_output, (_, _) = self.lstm(X)
@@ -99,6 +98,7 @@ class attention_action_decoder(nn.Module):
         self.embedding = nn.Embedding(action_size, embedding_size, padding_idx=0)
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers=num_layers, batch_first=True)
         self.hidden_to_action = nn.Linear(hidden_size, action_size)
+        self.hidden_size = hidden_size
         nn.init.xavier_uniform_(self.hidden_to_action.weight)
         # init W for h_i, W, h^q
         self.W_c = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, hidden_size)))
@@ -113,7 +113,7 @@ class attention_action_decoder(nn.Module):
 
         self.W_b_d = nn.Linear(W_d_dim, input_size)
         nn.init.xavier_uniform_(self.W_b_d.weight)
-    
+
     def attend(self, H, query, weight):
         """
         H: batch_size x sen_length x 2*hidden
@@ -132,12 +132,12 @@ class attention_action_decoder(nn.Module):
         z = torch.einsum('ijk, ijk -> ijk', [alpha, H])
         z = z.sum(1)
         return z
-    
+
     def init_hidden(self, batch_size):
         h_0 = nn.Parameter(nn.init.xavier_uniform_(
-            torch.zeros((batch_size, self.hidden_dim)))).to(device)
+            torch.zeros((batch_size, self.hidden_size)))).to(device)
         c_0 = nn.Parameter(nn.init.xavier_uniform_(
-            torch.zeros((batch_size, self.hidden_dim)))).to(device)
+            torch.zeros((batch_size, self.hidden_size)))).to(device)
         return (h_0, c_0)
 
     def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
@@ -145,7 +145,7 @@ class attention_action_decoder(nn.Module):
         batch_size = ins.shape[0]
         h, c = self.init_hidden(batch_size)
         all_outputs = None
-        X = self.embedding(X.to(device))
+        X = self.embedding(actions.to(device))
         current_env_context = torch.reshape(current_env_context, (current_env_context.shape[0], 1, current_env_context.shape[1]))
         current_env_context = current_env_context.repeat((1, X.shape[1], 1))
         ini_env_context = torch.reshape(ini_env_context, (ini_env_context.shape[0], 1, ini_env_context.shape[1]))
@@ -187,8 +187,6 @@ class attention_action_decoder(nn.Module):
         softmax = nn.Softmax(dim=0)
         return torch.argmax(softmax(all_outputs[0][0]))
 
-        
-
 def sequence_mask(X, valid_len, value=0):
     """Mask irrelevant entries in sequences."""
     maxlen = X.size(1)
@@ -220,6 +218,7 @@ class Seq2Seq(nn.Module):
         loss_function = MaskedSoftmaxCELoss()
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         for i in range(epoch):
+            avg_loss = 0
             for step, batch in enumerate(dl):
                 batch = tuple(t.to(device) for t in batch)
                 ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, y_true, y_true_valid = batch

@@ -46,13 +46,7 @@ def execute(world_state, action_sequence):
     return fsa.world_state()
 
 class world_state_encoder(nn.Module):
-    def __init__(
-        self,
-        pos_embedded_dim=10,
-        color_embedded_dim=10,
-        num_layers=1,
-        hidden_dim=10,
-    ):
+    def __init__(self, pos_embedded_dim=10, color_embedded_dim=10, num_layers=1, hidden_dim=10):
         super(world_state_encoder, self).__init__()
         self.pos_embedded_dim = pos_embedded_dim
         self.color_embedded_dim = color_embedded_dim
@@ -118,6 +112,11 @@ class attention_action_decoder(nn.Module):
         nn.init.xavier_uniform_(self.W_b_d.weight)
     
     def attend(self, H, query, weight):
+        """
+        H: batch_size x sen_length x 2*hidden
+        weight: 2 * hidden x hidden
+        query:  batch_size x hidden
+        """
         query = query.to(device)
         weight = weight.to(device)
         alpha = torch.matmul(H, weight)
@@ -131,8 +130,98 @@ class attention_action_decoder(nn.Module):
         z = z.sum(1)
         return z
     
+    def init_hidden(self, batch_size):
+        h_0 = nn.Parameter(nn.init.xavier_uniform_(
+            torch.zeros((batch_size, self.hidden_dim)))).to(device)
+        c_0 = nn.Parameter(nn.init.xavier_uniform_(
+            torch.zeros((batch_size, self.hidden_dim)))).to(device)
+        return (h_0, c_0)
+
     def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
-        from torch
+        # from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
+        batch_size = ins.shape[0]
+        h, c = self.init_hidden(batch_size)
+        all_outputs = None
+        X = self.embedding(X.to(device))
+        current_env_context = torch.reshape(current_env_context, (current_env_context.shape[0], 1, current_env_context.shape[1]))
+        current_env_context = current_env_context.repeat((1, X.shape[1], 1))
+        ini_env_context = torch.reshape(ini_env_context, (ini_env_context.shape[0], 1, ini_env_context.shape[1]))
+        ini_env_context = ini_env_context.repeat((1, X.shape[1], 1))
+        tanh = nn.Tanh()
+        act_len = X.shape[1]
+
+        for i in range(act_len):
+            z_k_c = self.attend(ins, h, self.W_c)
+            z_k_p = self.attend(his, torch.cat((h, z_k_c), 1), self.W_p)
+            z_s_1_k_1 = self.attend(
+                ini_env_context, torch.cat((h, z_k_c), 1), self.W_s_b_1)
+            z_s_1_k_2 = self.attend(
+                ini_env_context, torch.cat((h, z_k_c), 1), self.W_s_b_2)
+            z_s_1_k = torch.cat((z_s_1_k_1, z_s_1_k_2), -1)
+            z_s_k_k_1 = self.attend(
+                current_env_context, torch.cat((h, z_k_c), 1), self.W_s_c_1)
+            z_s_k_k_2 = self.attend(
+                current_env_context, torch.cat((h, z_k_c), 1), self.W_s_c_2)
+            z_s_k_k = torch.cat((z_s_k_k_1, z_s_k_k_2), -1)
+            phi_action_i = X.permute(1, 0, 2)[i]
+            h_k_1 = torch.cat(
+                (z_k_c, z_k_p, z_s_1_k, z_s_k_k, phi_action_i), -1)
+            h_k = tanh(self.W_b_d(h_k_1))
+            h_k = torch.reshape(h_k, (h_k.shape[0], 1, h_k.shape[1]))
+            h = torch.reshape(h, (1, h.shape[0], h.shape[1]))
+            c = torch.reshape(c, (1, c.shape[0], c.shape[1]))
+            output, (h, c) = self.lstm(h_k, (h, c))
+            h = h[0]
+            c = c[0]
+            if i == 0:
+                all_outputs = output
+            else:
+                all_outputs = torch.cat((all_outputs, output), dim=1)
+        all_outputs = self.hidden_to_action(all_outputs)
+        if teacher_force:
+            return all_outputs
+
+        softmax = nn.Softmax(dim=0)
+        return torch.argmax(softmax(all_outputs[0][0]))
+
+        
+
+def sequence_mask(X, valid_len, value=0):
+    """Mask irrelevant entries in sequences."""
+    maxlen = X.size(1)
+    mask = torch.arange((maxlen), dtype=torch.float32,
+                        device=X.device)[None, :] < valid_len[:, None]
+    X[~mask] = value
+    return X
+
+class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
+    """The softmax cross-entropy loss with masks."""
+    def forward(self, pred, label, valid_len):
+        weights = torch.ones_like(label)
+        weights = sequence_mask(weights, valid_len)
+        self.reduction = 'none'
+        unweighted_loss = super(MaskedSoftmaxCELoss,
+                                self).forward(pred.permute(0, 2, 1), label)
+        weighted_loss = (unweighted_loss * weights).mean(dim=1)
+        return weighted_loss
+
+class Seq2Seq(nn.Module):
+    def __init__(self, vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size):
+        super(Seq2Seq, self).__init__()
+        self.encoder = instruction_encoder(vocab_size, hidden_size=ins_hidden_size, embedded_size=ins_embedding_size, num_layers=1, bidirectional=True)
+        self.env_encoder = world_state_encoder(pos_embedded_dim=pos_embedding_size, color_embedded_dim=color_embedding_size, hidden_dim=color_hidden_size)
+        env_dim = 7 * (pos_embedding_size + color_hidden_size)
+        self.decoder = attention_action_decoder(action_size, act_input_size, ins_hidden_size, act_hidden_size, act_embedding_size, env_dim)
+    
+    def train(self, dl, batch_size=32, epoch=10, learning_rate=0.01):
+        loss_function = MaskedSoftmaxCELoss()
+        optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+        for i in range(epoch):
+            for step, batch in enumerate(dl):
+                batch = tuple(t.to(device) for t in batch)
+                ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act = batch
+                
+
 
 
         
@@ -142,7 +231,21 @@ def main():
     dev = "dev.json"
     test = "test_leaderboard.json"
     DL = dataloader(train, dev, test)
-    train_loader = DL.train_loader() # 
+    train_loader = DL.train_loader()
+
+    vocab_size = len(DL.instruction_vocab)
+    action_size = len(DL.action_vocab)
+
+    # instruction encoder setting
+    ins_hidden_size = 100
+    ins_embedding_size = 50
+    ins_num_lstm_layers = 1
+
+    # world state encoder setting
+    ws_pos_embedding_size = 10
+
+
+    # vocab_size, hidden_size=100, embedded_size=50, num_layers=1, bidirectional=True):
 
     # ins, his_ins, ins_valid, his_invalid, ini_env, current_env, act_id, valid_act)
     

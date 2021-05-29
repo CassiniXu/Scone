@@ -10,41 +10,13 @@ from fsa import ExecutionFSA, EOS, ACTION_SEP, NO_ARG
 
 from alchemy_fsa import AlchemyFSA
 from alchemy_world_state import AlchemyWorldState
+from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 import os
 import pandas as pd
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-
-def execute(world_state, action_sequence):
-    """Executes an action sequence on a world state.
-    TODO: This code assumes the world state is a string. However, you may sometimes
-    start with an AlchemyWorldState object. I suggest loading the AlchemyWorldState objects
-    into memory in load_data, and moving that part of the code to load_data. The following
-    code just serves as an example of how to 1) make an AlchemyWorldState and 2) execute
-    a sequence of actions on it.
-    Inputs:
-        world_state (str): String representing an AlchemyWorldState.
-        action_sequence (list of str): Sequence of actions in the format ["action arg1 arg2",...]
-            (like in the JSON file).
-    """
-    alchemy_world_state = AlchemyWorldState(world_state)
-    fsa = AlchemyFSA(alchemy_world_state)
-
-    for action in action_sequence:
-        split = action.split(" ")
-        act = split[0]
-        arg1 = split[1]
-
-        # JSON file doesn't contain  NO_ARG.
-        if len(split) < 3:
-            arg2 = NO_ARG
-        else:
-            arg2 = split[2]
-        fsa.feed_complete_action(act, arg1, arg2)
-
-    return fsa.world_state()
 
 class world_state_encoder(nn.Module):
     def __init__(self, pos_embedded_dim=10, color_embedded_dim=10, num_layers=1, hidden_dim=10):
@@ -89,7 +61,6 @@ class instruction_encoder(nn.Module):
             X = self.embedding(X)
             output, (_, _) = self.lstm(X)
             return output
-        from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
         X = self.embedding(X)
         X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
         packed_output, (_, _) = self.lstm(X)
@@ -218,7 +189,7 @@ class Seq2Seq(nn.Module):
         env_dim = 7 * (pos_embedding_size + color_hidden_size)
         self.decoder = attention_action_decoder(action_size, act_input_size, ins_hidden_size, act_hidden_size, act_embedding_size, env_dim)
     
-    def train(self, dl, batch_size=32, epoch=0, learning_rate=0.01):
+    def train(self, dl, batch_size=32, epoch=10, learning_rate=0.01):
         loss_function = MaskedSoftmaxCELoss()
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         for i in range(epoch):
@@ -362,7 +333,7 @@ def main():
     dev = "dev.json"
     test = "test_leaderboard.json"
     batch_size = 32
-    num_filter = 10
+    num_filter = 2
     DL = dataloader(train, dev, test, batch_size, num_filter)
     train_loader = DL.train_loader()
 
@@ -386,14 +357,14 @@ def main():
 
     model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
     model.to(device)
-    epoch = 10
+    epoch = 15
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
     model.to(device)
     dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
     result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
-    result_ins_file = "dev_instruction_pred.csv"
-    result_inter_file = "dev_inter_pred.csv"
+    result_ins_file = "dev_instruction_pred_3.csv"
+    result_inter_file = "dev_inter_pred_3.csv"
     save_output(result, dev_id, result_ins_file, result_inter_file)
 
 

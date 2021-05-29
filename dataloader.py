@@ -14,6 +14,9 @@ import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler
+
 class dataloader():
     def __init__(self, train, dev, test, batch_size = 32, num_filter = 10):
         self.instructions_to_id = None
@@ -22,7 +25,7 @@ class dataloader():
         self.train = train
         self.dev = dev
         self.test = test
-        self.batch_size = 32
+        self.batch_size = batch_size
         instructions, his_instructions, actions, initial_environments, environments, identifiers = self.load_data(self.train)
         self.construct_vocab(actions, instructions, num_filter)
         dev_ins, dev_his, _, dev_ini_env, _, dev_id = self.load_data(self.dev)
@@ -229,7 +232,7 @@ class dataloader():
 
     def padding(self, unpadded_data):
         valid_length = [len(i) for i in unpadded_data]
-        from torch.nn.utils.rnn import pad_sequence
+        
         unpadded_data = [torch.tensor(i, dtype=torch.long) for i in unpadded_data]
         padded_data = pad_sequence(unpadded_data, batch_first = True)
         return padded_data, valid_length
@@ -244,7 +247,6 @@ class dataloader():
         return cooked_data
 
     def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
-        from torch.utils.data import TensorDataset, DataLoader, RandomSampler
         train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)

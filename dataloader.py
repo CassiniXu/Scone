@@ -9,6 +9,7 @@ START = "<START>"
 NUM_SEQUENCE = 5
 NUM_CHEMICAL_LAYERS = 4
 color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
+id_to_color = {0:"_", 1:"y", 2:"o", 3:"g", 4:"r", 5:"b", 6:"p"}
 
 class dataloader():
     def __init__(self, train, dev, test, batch_size = 32, num_filter = 10):

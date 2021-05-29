@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 
 import math
-from dataloader import dataloader, NUM_SEQUENCE, UNKNOWN, PAD, START, NUM_CHEMICAL_LAYERS, color_to_id
+from dataloader import dataloader, NUM_SEQUENCE, UNKNOWN, PAD, START, NUM_CHEMICAL_LAYERS, color_to_id, id_to_color
 from fsa import ExecutionFSA, EOS, ACTION_SEP, NO_ARG
 
 from alchemy_fsa import AlchemyFSA
@@ -13,8 +13,6 @@ from alchemy_world_state import AlchemyWorldState
 import os
 import pandas as pd
 
-# color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
-id_to_color = {0:"_", 1:"y", 2:"o", 3:"g", 4:"r", 5:"b", 6:"p"}
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -321,7 +319,7 @@ class Seq2Seq(nn.Module):
                 pred_act = ix_act[self.decoder(encoded_ins, encoded_his, pred_act, encoded_curr, encoded_ini, teacher_force=False).item()]
                 act_sequence.append(pred_act)
                 pred_count += 1
-                if pred_count < max_act_len:
+                if pred_count >= max_act_len:
                     break
             print("prediction:" + str(index) + " complete.")
             act_sequence = self.clean_action(act_sequence)

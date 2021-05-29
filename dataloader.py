@@ -1,6 +1,7 @@
 import numpy as np
 import json
 from fsa import EOS, ACTION_SEP, NO_ARG
+import torch
 import string
 UNKNOWN = "<UNKNOWN>"
 PAD = "<PAD>"
@@ -11,7 +12,6 @@ color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
 
 class dataloader():
     def __init__(self, train, dev, test, batch_size = 32, num_filter = 10):
-        import torch
         self.instructions_to_id = None
         self.actions_to_id = None
         self.id_to_actions = None
@@ -21,8 +21,8 @@ class dataloader():
         self.batch_size = 32
         instructions, his_instructions, actions, initial_environments, environments, identifiers = self.load_data(self.train)
         self.construct_vocab(actions, instructions, num_filter)
-        dev_ins, dev_his, _, dev_ini_env, _, _ = self.load_data(self.dev)
-        test_ins, test_his, _, test_ini_env, _, _ = self.load_data(self.test)
+        dev_ins, dev_his, _, dev_ini_env, _, dev_id = self.load_data(self.dev)
+        test_ins, test_his, _, test_ini_env, _, test_id = self.load_data(self.test)
 
         """
         prepare for training data
@@ -32,6 +32,10 @@ class dataloader():
         train_id = self.replace_with_id(instructions)
         train_his_id = self.replace_with_id(his_instructions)
         act_id = self.replace_with_id(actions, False)
+
+        """
+        construct ground truth act
+        """
         act_id, ground_act_id = self.construct_act(act_id)
 
 
@@ -63,22 +67,23 @@ class dataloader():
         initial_environments = torch.tensor(initial_environments, dtype=torch.long)
         environments = torch.tensor(environments, dtype=torch.long)
 
-        train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length, ground_act_id_pad, ground_act_id_pad_valid_length)
+        self.train_dataloader = self.construct_dataloader(train_id_pad, train_his_id_pad, train_valid_length, train_his_valid_length, initial_environments, environments, act_id_pad, act_valid_length, ground_act_id_pad, ground_act_id_pad_valid_length)
 
         """
         process dev and test data
         """
         dev_ins, dev_his, dev_ini_env = self.process_non_train_ins(dev_ins, dev_his, dev_ini_env)
         test_ins, test_his, test_ini_env = self.process_non_train_ins(test_ins, test_his, test_ini_env)
-        
+
         # return
-        self.train_dataloader = train_dataloader
         self.dev_ins = dev_ins
         self.dev_his = dev_his
         self.dev_ini_env = dev_ini_env
+        self.dev_id = dev_id
         self.test_ins = test_ins
         self.test_his = test_his
         self.test_ini_env = test_ini_env
+        self.test_id = test_id
 
     def construct_act(self, act):
         input_act = []
@@ -97,13 +102,12 @@ class dataloader():
         return self.train_dataloader
     
     def dev_data(self):
-        return self.dev_ins, self.dev_his, self.dev_ini_env
+        return self.dev_ins, self.dev_his, self.dev_ini_env, self.dev_id
     
     def test_data(self):
-        return self.test_ins, self.test_his, self.test_ini_env
+        return self.test_ins, self.test_his, self.test_ini_env, sef.test_id
 
     def process_non_train_ins(self, ins, his, ini_env):
-        import torch
         ins = self.replace_with_id(ins)
         his = self.replace_with_id(his)
         ini_env = self.process_world_state(ini_env)
@@ -117,6 +121,19 @@ class dataloader():
             else:
                 his[i] = torch.tensor([his[i]], dtype=torch.long)
         return ins, his, ini_env
+    
+    def process_raw_ws(self, ws):
+        ws = ws.split(" ")
+        single_ws = []
+        for j in ws:
+            pos_color = j.split(":")
+            pos = [int(pos_color[0]) - 1]
+            beaker_color = pos_color[1][:NUM_CHEMICAL_LAYERS] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))
+            beaker_color_id = []
+            for i in beaker_color:
+                beaker_color_id.append(color_to_id[i])
+            single_ws = single_ws + pos + beaker_color_id
+        return torch.tensor([single_ws], dtype=torch.long)
 
     def replace_world_state(self, world_state):
         splitted_world_state = []
@@ -159,7 +176,7 @@ class dataloader():
             instructions_to_id[token] = index + 1
         instructions_to_id[PAD] = 0
         sorted_instructions_tokens.append(PAD)
-        
+
         self.instructions_to_id = instructions_to_id
 
         sorted_actions = sorted(set(actions_counter))
@@ -209,7 +226,6 @@ class dataloader():
     def padding(self, unpadded_data):
         valid_length = [len(i) for i in unpadded_data]
         from torch.nn.utils.rnn import pad_sequence
-        import torch
         unpadded_data = [torch.tensor(i, dtype=torch.long) for i in unpadded_data]
         padded_data = pad_sequence(unpadded_data, batch_first = True)
         return padded_data, valid_length
@@ -222,7 +238,7 @@ class dataloader():
         
         cooked_data = [[dic[token] if token in dic.keys() else dic[UNKNOWN] for token in line] for line in raw_data]
         return cooked_data
-    
+
     def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         from torch.utils.data import TensorDataset, DataLoader, RandomSampler
         train_data = TensorDataset(ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length)

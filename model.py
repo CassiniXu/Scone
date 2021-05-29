@@ -5,13 +5,16 @@ import torch.nn.functional as F
 import numpy as np
 
 import math
-from dataloader import dataloader, NUM_SEQUENCE
-
+from dataloader import dataloader, NUM_SEQUENCE, UNKNOWN, PAD, START, NUM_CHEMICAL_LAYERS, color_to_id
 from fsa import ExecutionFSA, EOS, ACTION_SEP, NO_ARG
 
 from alchemy_fsa import AlchemyFSA
 from alchemy_world_state import AlchemyWorldState
 import os
+import pandas as pd
+
+# color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
+id_to_color = {0:"_", 1:"y", 2:"o", 3:"g", 4:"r", 5:"b", 6:"p"}
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -41,7 +44,9 @@ def execute(world_state, action_sequence):
             arg2 = NO_ARG
         else:
             arg2 = split[2]
-
+        if len(split) < 3:
+            if world_state.split(" ")[int(arg1)-1][2] == "_":
+                continue
         fsa.feed_complete_action(act, arg1, arg2)
 
     return fsa.world_state()
@@ -84,7 +89,11 @@ class instruction_encoder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embedded_size, padding_idx=0)
         self.lstm = nn.LSTM(embedded_size, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=bidirectional)
 
-    def forward(self, X, valid_length):
+    def forward(self, X, valid_length=None, is_predict=False):
+        if is_predict:
+            X = self.embedding(X)
+            output, (_, _) = self.lstm(X)
+            return output
         from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
         X = self.embedding(X)
         X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
@@ -140,7 +149,7 @@ class attention_action_decoder(nn.Module):
             torch.zeros((batch_size, self.hidden_size)))).to(device)
         return (h_0, c_0)
 
-    def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
+    def forward(self, ins, his, actions, current_env_context, ini_env_context, teacher_force=True):
         # from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
         batch_size = ins.shape[0]
         h, c = self.init_hidden(batch_size)
@@ -214,7 +223,7 @@ class Seq2Seq(nn.Module):
         env_dim = 7 * (pos_embedding_size + color_hidden_size)
         self.decoder = attention_action_decoder(action_size, act_input_size, ins_hidden_size, act_hidden_size, act_embedding_size, env_dim)
     
-    def train(self, dl, batch_size=32, epoch=10, learning_rate=0.01):
+    def train(self, dl, batch_size=32, epoch=0, learning_rate=0.01):
         loss_function = MaskedSoftmaxCELoss()
         optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         for i in range(epoch):
@@ -229,7 +238,7 @@ class Seq2Seq(nn.Module):
                 his_out = self.encoder(his_ins, his_valid)
                 ini_env_context = self.env_encoder(ini_env)
                 current_env_context = self.env_encoder(current_env)
-                pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, ins_valid, teacher_force=True)
+                pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, teacher_force=True)
                 l = loss_function(pred, y_true.to(device), y_true_valid)
                 l.sum().backward()
                 if step % 20 == 0:
@@ -239,11 +248,115 @@ class Seq2Seq(nn.Module):
             print("loss at epoch " + str(i) + ":")
             print(avg_loss / batch_count)
     
-    # def predict(self, dl):
+    def clean_action(self, action, action_split=False):
+        valid_action = []
+        i = 0
+        while i < len(action):
+            if action_split == False:
+                if action[i] == START or action[i] == PAD or action[i] == EOS:
+                    i += 1
+                else:
+                    valid_action.append(action[i])
+                    i += 1
+            else:
+                """
+                not implemented
+                """
+        return valid_action
+
+    def clean_ws(self, ws):
+        ws = ws.split(" ")
+        cleaned_ws = ""
+        for i in ws:
+            cleaned_ws += i[:6]
+            cleaned_ws += " "
+        return cleaned_ws[:-1]
+
+    def recover_ws(self, ws):
+        str_ws = ""
+        for i in range(0, len(ws), 5):
+            str_ws += " "
+            str_ws += str(ws[i] + 1)
+            str_ws += ":"
+            str_ws += id_to_color[ws[i+1]]
+
+            if id_to_color[ws[i+2]] != "_":
+                str_ws += id_to_color[ws[i+2]]
+            else:
+                continue
+            
+            if id_to_color[ws[i+3]] != "_":
+                str_ws += id_to_color[ws[i+3]]
+            else:
+                continue
+            
+            if id_to_color[ws[i+4]] != "_":
+                str_ws += id_to_color[ws[i+4]]
+            else:
+                continue
 
 
-# def save_output(result):
+        return str_ws[1:]
 
+    def predict(self, ins, his, ini_env, act_ix, ix_act, DL, max_act_len = 8):
+        data_length = len(ins)
+
+        # initial of the environment
+        curr_env = ini_env[0]
+        pred_act = START
+        ws = self.recover_ws(ini_env[0][0].tolist())
+        all_ws = []
+        for index in range(data_length):
+            act_sequence = []
+            encoded_ins = self.encoder(ins[index], is_predict=True)
+            encoded_his = self.encoder(his[index], is_predict=True)
+            encoded_ini = self.env_encoder(ini_env[index])
+            encoded_curr = encoded_ini if index % NUM_SEQUENCE == 0 else self.env_encoder(curr_env)
+            if index % NUM_SEQUENCE == 0:
+                ws = self.recover_ws(ini_env[index][0].tolist())
+            pred_act = START
+            pred_count = 0
+            while pred_act != EOS:
+                pred_act = torch.tensor([[act_ix[pred_act]]], dtype=torch.long)
+                pred_act = ix_act[self.decoder(encoded_ins, encoded_his, pred_act, encoded_curr, encoded_ini, teacher_force=False).item()]
+                act_sequence.append(pred_act)
+                pred_count += 1
+                if pred_count < max_act_len:
+                    break
+            print("prediction:" + str(index) + " complete.")
+            act_sequence = self.clean_action(act_sequence)
+            print(act_sequence)
+            ws = execute(ws, act_sequence).__str__()
+            print(ws)
+            ws = self.clean_ws(ws)
+            print(ws)
+            all_ws.append(ws)
+            curr_env = DL.process_raw_ws(ws)
+        print("Prediction complete.")
+        return all_ws
+
+
+def save_output(ws, idf, ins_file, inter_file):
+    ins_df = pd.DataFrame()
+    inter_df = pd.DataFrame()
+    ins = []
+    ins_id = []
+    inter = []
+    inter_id = []
+
+    for i in range(len(ws)):
+        ins.append(ws[i])
+        ins_id.append(idf[i])
+        if i % NUM_SEQUENCE == (NUM_SEQUENCE-1):
+            inter.append(ws[i])
+            inter_id.append(idf[i][:-2])
+    ins_df["id"] = ins_id
+    ins_df["final_world_state"] = ins
+    inter_df["id"] = inter_id
+    inter_df["final_world_state"] = inter
+    ins_df.to_csv(ins_file, index=False)
+    inter_df.to_csv(inter_file, index=False)
+    print("Results saved.")
 
 def main():
     train = "train.json"
@@ -274,10 +387,14 @@ def main():
 
     model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
     model.to(device)
-    epoch = 10
+    epoch = 15
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
-    # dev_pred = model.predict()
+    dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
+    result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
+    result_ins_file = "dev_instruction_pred.csv"
+    result_inter_file = "dev_inter_pred.csv"
+    save_output(result, dev_id, result_ins_file, result_inter_file)
 
 
 if __name__ == "__main__":

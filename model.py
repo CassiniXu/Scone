@@ -42,9 +42,6 @@ def execute(world_state, action_sequence):
             arg2 = NO_ARG
         else:
             arg2 = split[2]
-        if len(split) < 3:
-            if world_state.split(" ")[int(arg1)-1][2] == "_":
-                continue
         fsa.feed_complete_action(act, arg1, arg2)
 
     return fsa.world_state()
@@ -254,7 +251,10 @@ class Seq2Seq(nn.Module):
                 if action[i] == START or action[i] == PAD or action[i] == EOS:
                     i += 1
                 else:
-                    valid_action.append(action[i])
+                    split_action = action[i].split(" ")
+                    if split_action[0] == "pop":
+                        split_action.append(NO_ARG)
+                    valid_action.append(split_action)
                     i += 1
             else:
                 """
@@ -324,7 +324,8 @@ class Seq2Seq(nn.Module):
             print("prediction:" + str(index) + " complete.")
             act_sequence = self.clean_action(act_sequence)
             print(act_sequence)
-            ws = execute(ws, act_sequence).__str__()
+            ws = AlchemyWorldState(ws).execute_seq(act_sequence).__str__()
+            # ws = execute(ws, act_sequence).__str__()
             print(ws)
             ws = self.clean_ws(ws)
             print(ws)
@@ -385,9 +386,10 @@ def main():
 
     model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
     model.to(device)
-    epoch = 15
+    epoch = 10
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
+    model.to(device)
     dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
     result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
     result_ins_file = "dev_instruction_pred.csv"

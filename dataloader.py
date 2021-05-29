@@ -10,6 +10,9 @@ NUM_SEQUENCE = 5
 NUM_CHEMICAL_LAYERS = 4
 color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
 id_to_color = {0:"_", 1:"y", 2:"o", 3:"g", 4:"r", 5:"b", 6:"p"}
+import os
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 class dataloader():
     def __init__(self, train, dev, test, batch_size = 32, num_filter = 10):
@@ -115,12 +118,12 @@ class dataloader():
         ini_env = self.replace_world_state(ini_env)
         data_length = len(ins)
         for i in range(data_length):
-            ins[i] = torch.tensor([ins[i]], dtype=torch.long)
-            ini_env[i] = torch.tensor([ini_env[i]], dtype=torch.long)
+            ins[i] = torch.tensor([ins[i]], dtype=torch.long).to(device)
+            ini_env[i] = torch.tensor([ini_env[i]], dtype=torch.long).to(device)
             if i % NUM_SEQUENCE == 0:
-                his[i] = torch.tensor([[0]], dtype=torch.long)
+                his[i] = torch.tensor([[0]], dtype=torch.long).to(device)
             else:
-                his[i] = torch.tensor([his[i]], dtype=torch.long)
+                his[i] = torch.tensor([his[i]], dtype=torch.long).to(device)
         return ins, his, ini_env
     
     def process_raw_ws(self, ws):
@@ -242,7 +245,7 @@ class dataloader():
 
     def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         from torch.utils.data import TensorDataset, DataLoader, RandomSampler
-        train_data = TensorDataset(ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length)
+        train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         return train_dataloader

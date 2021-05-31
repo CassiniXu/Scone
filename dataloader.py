@@ -183,7 +183,6 @@ class dataloader():
             instructions_to_id[token] = index + 1
         instructions_to_id[PAD] = 0
         sorted_instructions_tokens.append(PAD)
-
         self.instructions_to_id = instructions_to_id
 
         sorted_actions = sorted(set(actions_counter))
@@ -232,7 +231,6 @@ class dataloader():
 
     def padding(self, unpadded_data):
         valid_length = [len(i) for i in unpadded_data]
-        
         unpadded_data = [torch.tensor(i, dtype=torch.long) for i in unpadded_data]
         padded_data = pad_sequence(unpadded_data, batch_first = True)
         return padded_data, valid_length

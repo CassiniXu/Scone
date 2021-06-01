@@ -9,7 +9,7 @@ START = "<START>"
 NUM_SEQUENCE = 5
 NUM_CHEMICAL_LAYERS = 4
 color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
-id_to_color = {0:"_", 1:"y", 2:"o", 3:"g", 4:"r", 5:"b", 6:"p"}
+id_to_color = {0: "_", 1: "y", 2: "o", 3: "g", 4: "r", 5: "b", 6: "p"}
 import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -214,8 +214,19 @@ class dataloader():
         identifiers = [[i["identifier"]] * len(i["utterances"]) for i in X]
         identifiers = [id + "-" + str(j) for item in identifiers for j, id in enumerate(item)]
         history_instructions = self.construct_history_instructions(instructions)
+        environments = self.construct_before_env(environments, initial_environments)
         return instructions, history_instructions, actions, initial_environments, environments, identifiers
     
+    def construct_before_env(self, env, ini):
+        before_env = []
+        data_len = len(env)
+        for i in range(data_len):
+            if i % NUM_SEQUENCE == 0:
+                before_env.append(ini[i])
+            else:
+                before_env.append(env[i-1])
+        return before_env
+
     def construct_history_instructions(self, instructions):
         history_ins = []
         his = []
@@ -246,8 +257,9 @@ class dataloader():
 
     def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
-        train_sampler = RandomSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
+        # train_sampler = RandomSampler(train_data)
+        # train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
+        train_dataloader = DataLoader(train_data, batch_size = self.batch_size)
         return train_dataloader
 
 if __name__ == "__main__":
@@ -255,3 +267,10 @@ if __name__ == "__main__":
     dev = "dev.json"
     test = "test_leaderboard.json"
     DL = dataloader(train, dev, test)
+    dl = DL.train_loader()
+    for step, batch in enumerate(dl):
+        batch = tuple(t.to(device) for t in batch)
+        ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, y_true, y_true_valid = batch
+        print(ini_env[:10])
+        print(current_env[:10])
+        break

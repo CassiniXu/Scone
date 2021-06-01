@@ -26,30 +26,42 @@ class world_state_encoder(nn.Module):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.color_embedding = nn.Embedding(7, self.color_embedded_dim)
-        self.pos_embedding = nn.Embedding(7, self.pos_embedded_dim)
-        self.lstm = nn.LSTM(
-                self.color_embedded_dim, self.hidden_dim, num_layers=self.num_layers, batch_first = True
-            )
+        self.pos_embedding = nn.Embedding(8, self.pos_embedded_dim)
+        self.lstm = nn.LSTM(self.color_embedded_dim, self.hidden_dim, num_layers=self.num_layers, batch_first=True)
     
     def forward(self, X):
         batch_size = X.shape[0]
-        beaker_id = torch.tensor([[0, 1, 2, 3, 4, 5, 6]], dtype=torch.long)
+        beaker_id = torch.tensor([[1, 2, 3, 4, 5, 6, 7]], dtype=torch.long)
         beaker_id = beaker_id.repeat((batch_size, 1)).to(device)
+        # print(beaker_id)
+        # print(beaker_id.shape)
         beaker_id = self.pos_embedding(beaker_id)
+        # print(beaker_id.shape)
         world_state = None
         all_colors = None
         for i in range(batch_size):
             colors = None
             for j in range(0, X.shape[1], 5):
-                processed_color = self.color_embedding(X[i][j+1:j+5]).reshape((1, 4, -1))
-                # _, (encoded_color, _) = self.lstm(processed_color)
-                encoded_color = processed_color.reshape((1, 1, -1))
+                max_len = len([int(t) for t in X[i][j+1:j+5] if int(t) != 0])
+                if max_len == 0: max_len = 1
+                processed_color = self.color_embedding(X[i][j+1:j+5][:max_len]).reshape((1, max_len, -1))
+                _, (encoded_color, _) = self.lstm(processed_color) # 1 x 1 x hidden
+                # print(encoded_color)
+                # print(encoded_color.shape)
                 colors = encoded_color if j == 0 else torch.cat((colors, encoded_color), dim=1)
+            # print(colors.shape)
+            # exit()
             all_colors = colors if i == 0 else torch.cat((all_colors, colors), dim=0)
+        # print(all_colors.shape)
+        # exit()
         all_colors = all_colors.to(device)
-        # context = torch.cat((beaker_id, all_colors), dim=2)
-        context = all_colors
-        context = torch.reshape(context, (batch_size, -1))
+        context = torch.cat((beaker_id, all_colors), dim=2)
+        # print(context.shape)
+        # exit()
+        # context = all_colors
+        # context = torch.reshape(context, (batch_size, 1, -1))
+        # print(context.shape)
+        # exit()
         # print(context.shape)
         return context
 
@@ -74,7 +86,7 @@ class attention_action_decoder(nn.Module):
     def __init__(self, action_size, input_size, ins_hidden_size, hidden_size, embedding_size, env_dim, num_layers=1):
         super(attention_action_decoder, self).__init__()
         self.embedding = nn.Embedding(action_size, embedding_size, padding_idx=0)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=num_layers)
+        self.lstm = nn.LSTMCell(input_size, hidden_size)
         self.hidden_to_action = nn.Linear(hidden_size, action_size)
         self.hidden_size = hidden_size
         nn.init.xavier_uniform_(self.hidden_to_action.weight)
@@ -95,12 +107,13 @@ class attention_action_decoder(nn.Module):
 
         # W_project = 2 * ins_hidden_size + env_dim
         W_project = 2 * ins_hidden_size
-        self.project = torch.randn((W_project, input_size),requires_grad=True)
-        nn.init.xavier_uniform_(self.project)
+        # self.project = torch.randn((W_project, hidden_size),requires_grad=True)
+        self.project = nn.Linear(W_project, hidden_size, bias=False)
 
         W_env_project = env_dim
-        self.env_project = torch.randn((W_env_project, input_size),requires_grad=True)
-        nn.init.xavier_uniform_(self.env_project)
+        self.env_project = nn.Linear(W_env_project, hidden_size, bias=False)
+        # self.env_project = torch.randn((W_env_project, hidden_size),requires_grad=True)
+        nn.init.xavier_uniform_(self.env_project.weight)
 
     def attend(self, H, query, weight):
         """
@@ -108,50 +121,40 @@ class attention_action_decoder(nn.Module):
         weight: 2 * ins_hidden x hidden
         query:  batch_size x hidden
         """
-        H_ = torch.matmul(H, weight)
+        H_ = weight(H)
         alpha_bar = torch.einsum('ijk, ik -> ij', [H_, query])
         alpha = nn.Softmax(1)(alpha_bar)
         c = torch.einsum('ijk, ij -> ik', [H, alpha])
         return c
 
     def init_hidden(self, batch_size):
-        h_0 = torch.randn((batch_size, self.hidden_size)).to(device)
-        c_0 = torch.randn((batch_size, self.hidden_size)).to(device)
-        return (h_0, c_0)
+        h_zeros = torch.zeros(batch_size, self.hidden_size, device = device)
+        c_zeros = torch.zeros(batch_size, self.hidden_size, device = device)
+        return h_zeros, c_zeros
 
     def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
         # lstm output: batch_size, seq_len, num_directions*hidden_size
         X = self.embedding(actions.to(device))
         batch_size = ins.shape[0]
-        ini_env_context = torch.unsqueeze(ini_env_context, 1)
-        ini_env_context = ini_env_context.repeat((1, X.shape[1], 1)) # batch_size, seq_len, env_size
-        current_env_context = torch.unsqueeze(current_env_context, 1)
-        current_env_context = current_env_context.repeat((1, X.shape[1], 1)) # batch_size, seq_len, env_size
         h, c = self.init_hidden(batch_size)
         act_len = X.shape[1]
-        all_outputs = None
+        output = []
         m = nn.ReLU()
         for i in range(act_len):
             c_ins = self.attend(ins, h, self.project)
             c_env = self.attend(current_env_context, h, self.env_project)
             E_t = X.permute(1, 0, 2)[i]
-            attended_X = torch.unsqueeze(torch.cat((E_t, c_ins, c_env), dim=1), 0)
-            h = torch.unsqueeze(h, 0)
-            c = torch.unsqueeze(c, 0)
+            attended_X = torch.cat((c_ins, c_env, E_t), dim=1)
             attended_X = m(self.W_b_d(attended_X))
-            output, (h, c) = self.lstm(attended_X, (h, c))
-            h = torch.squeeze(h, 0)
-            c = torch.squeeze(c, 0)
-            if i == 0:
-                all_outputs = output
-            else:
-                all_outputs = torch.cat((all_outputs, output), dim=0)
-        all_outputs = all_outputs.permute(1, 0, 2)
-        all_outputs = self.hidden_to_action(all_outputs)
+            h, c = self.lstm(attended_X, (h, c))
+            output.append(h)
+        output = torch.stack(output, dim=0)
+        output = output.permute(1, 0, 2)
+        output = self.hidden_to_action(output)
         if teacher_force:
-            return m(all_outputs)
+            return output
         softmax = nn.Softmax(dim=0)
-        return torch.argmax(softmax(m(all_outputs[0][0])))
+        return torch.argmax(softmax(output[0][0]))
 
 def sequence_mask(X, valid_len, value=0):
     """Mask irrelevant entries in sequences."""
@@ -162,7 +165,6 @@ def sequence_mask(X, valid_len, value=0):
     return X
 
 class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
-    """The softmax cross-entropy loss with masks."""
     def forward(self, pred, label, valid_len):
         weights = torch.ones_like(label)
         weights = sequence_mask(weights, valid_len)
@@ -177,9 +179,7 @@ class Seq2Seq(nn.Module):
         super(Seq2Seq, self).__init__()
         self.encoder = instruction_encoder(vocab_size, hidden_size=ins_hidden_size, embedded_size=ins_embedding_size, num_layers=1, bidirectional=True)
         self.env_encoder = world_state_encoder(pos_embedded_dim=pos_embedding_size, color_embedded_dim=color_embedding_size, hidden_dim=color_hidden_size)
-        # env_dim = 7 * (pos_embedding_size + color_hidden_size)
-        # env_dim = 7 * (color_hidden_size)
-        env_dim = 7 * 4 * color_embedding_size
+        env_dim = (pos_embedding_size + color_hidden_size)
         self.decoder = attention_action_decoder(action_size, act_input_size, ins_hidden_size, act_hidden_size, act_embedding_size, env_dim)
     
     def train(self, dl, batch_size=32, epoch=10, learning_rate=0.01):
@@ -324,8 +324,8 @@ def main():
     train = "train.json"
     dev = "dev.json"
     test = "test_leaderboard.json"
-    batch_size = 64
-    num_filter = 2
+    batch_size = 32
+    num_filter = 1
     DL = dataloader(train, dev, test, batch_size, num_filter)
     train_loader = DL.train_loader()
 
@@ -349,13 +349,13 @@ def main():
 
     model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
     model.to(device)
-    epoch = 5
+    epoch = 8
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
     dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
     result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
-    result_ins_file = "dev_instruction_pred_6.csv"
-    result_inter_file = "dev_inter_pred_6.csv"
+    result_ins_file = "dev_instruction_pred_18.csv"
+    result_inter_file = "dev_inter_pred_18.csv"
     save_output(result, dev_id, result_ins_file, result_inter_file)
 
 

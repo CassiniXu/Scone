@@ -1,4 +1,21 @@
 # SCONE
 
-With batch, pad_sequence, pack_paded_sequence, pad_packed_sequence, attention decoder
-action no split
+setting:
+
+shuffle: True
+
+batch: True
+
+masked_instruction: True
+
+action_split: False
+
+masked_loss: True
+
+attention: True
+
+history instruction: True
+
+initial world state: True
+
+current world state: True

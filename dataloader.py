@@ -272,9 +272,8 @@ class dataloader():
 
     def construct_dataloader(self, ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, ground_act_id_pad, ground_act_id_pad_valid_length):
         train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
-        # train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
-        # train_sampler = RandomSampler(train_data)
-        # train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
+        train_sampler = RandomSampler(train_data)
+        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
         train_dataloader = DataLoader(train_data, batch_size = self.batch_size)
         return train_dataloader
 

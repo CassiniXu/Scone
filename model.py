@@ -33,10 +33,7 @@ class world_state_encoder(nn.Module):
         batch_size = X.shape[0]
         beaker_id = torch.tensor([[1, 2, 3, 4, 5, 6, 7]], dtype=torch.long)
         beaker_id = beaker_id.repeat((batch_size, 1)).to(device)
-        # print(beaker_id)
-        # print(beaker_id.shape)
         beaker_id = self.pos_embedding(beaker_id)
-        # print(beaker_id.shape)
         world_state = None
         all_colors = None
         for i in range(batch_size):
@@ -46,23 +43,10 @@ class world_state_encoder(nn.Module):
                 if max_len == 0: max_len = 1
                 processed_color = self.color_embedding(X[i][j+1:j+5][:max_len]).reshape((1, max_len, -1))
                 _, (encoded_color, _) = self.lstm(processed_color) # 1 x 1 x hidden
-                # print(encoded_color)
-                # print(encoded_color.shape)
                 colors = encoded_color if j == 0 else torch.cat((colors, encoded_color), dim=1)
-            # print(colors.shape)
-            # exit()
             all_colors = colors if i == 0 else torch.cat((all_colors, colors), dim=0)
-        # print(all_colors.shape)
-        # exit()
         all_colors = all_colors.to(device)
         context = torch.cat((beaker_id, all_colors), dim=2)
-        # print(context.shape)
-        # exit()
-        # context = all_colors
-        # context = torch.reshape(context, (batch_size, 1, -1))
-        # print(context.shape)
-        # exit()
-        # print(context.shape)
         return context
 
 class instruction_encoder(nn.Module):
@@ -77,7 +61,7 @@ class instruction_encoder(nn.Module):
             output, (_, _) = self.lstm(X)
             return output
         X = self.embedding(X)
-        X = pack_padded_sequence(X, valid_length, batch_first=True, enforce_sorted=False)
+        X = pack_padded_sequence(X, valid_length.to(torch.device("cpu")), batch_first=True, enforce_sorted=False)
         packed_output, (_, _) = self.lstm(X)
         output, input_sizes = pad_packed_sequence(packed_output, batch_first=True)
         return output
@@ -91,29 +75,18 @@ class attention_action_decoder(nn.Module):
         self.hidden_size = hidden_size
         nn.init.xavier_uniform_(self.hidden_to_action.weight)
         # init W for h_i, W, h^q
-        # self.W_c = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, hidden_size)))
-        # self.W_p = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, 2 * ins_hidden_size + hidden_size)))
-        # self.W_s_b_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
-        # self.W_s_b_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
-        # self.W_s_c_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
-        # self.W_s_c_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_c = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, hidden_size)))
+        self.W_p = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(2 * ins_hidden_size, 2 * ins_hidden_size + hidden_size)))
+        self.W_s_b_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_b_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_c_1 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
+        self.W_s_c_2 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(env_dim, hidden_size + 2 * ins_hidden_size)))
 
-        # weight matrix for lstm input
-        # W_d_dim = 4 * env_dim + 4 * ins_hidden_size + embedding_size
-        W_d_dim = 2 * ins_hidden_size + env_dim + embedding_size
+        # weight matrix for lstm output
+        W_d_dim = 4 * env_dim + 4 * ins_hidden_size + embedding_size
 
         self.W_b_d = nn.Linear(W_d_dim, input_size)
         nn.init.xavier_uniform_(self.W_b_d.weight)
-
-        # W_project = 2 * ins_hidden_size + env_dim
-        W_project = 2 * ins_hidden_size
-        # self.project = torch.randn((W_project, hidden_size),requires_grad=True)
-        self.project = nn.Linear(W_project, hidden_size, bias=False)
-
-        W_env_project = env_dim
-        self.env_project = nn.Linear(W_env_project, hidden_size, bias=False)
-        # self.env_project = torch.randn((W_env_project, hidden_size),requires_grad=True)
-        nn.init.xavier_uniform_(self.env_project.weight)
 
     def attend(self, H, query, weight):
         """
@@ -121,7 +94,7 @@ class attention_action_decoder(nn.Module):
         weight: 2 * ins_hidden x hidden
         query:  batch_size x hidden
         """
-        H_ = weight(H)
+        H_ = torch.matmul(H, weight)
         alpha_bar = torch.einsum('ijk, ik -> ij', [H_, query])
         alpha = nn.Softmax(1)(alpha_bar)
         c = torch.einsum('ijk, ij -> ik', [H, alpha])
@@ -139,14 +112,25 @@ class attention_action_decoder(nn.Module):
         h, c = self.init_hidden(batch_size)
         act_len = X.shape[1]
         output = []
-        m = nn.ReLU()
+        tanh = nn.Tanh()
         for i in range(act_len):
-            c_ins = self.attend(ins, h, self.project)
-            c_env = self.attend(current_env_context, h, self.env_project)
-            E_t = X.permute(1, 0, 2)[i]
-            attended_X = torch.cat((c_ins, c_env, E_t), dim=1)
-            attended_X = m(self.W_b_d(attended_X))
-            h, c = self.lstm(attended_X, (h, c))
+            z_k_c = self.attend(ins, h, self.W_c)
+            z_k_p = self.attend(his, torch.cat((h, z_k_c), 1), self.W_p)
+            z_s_1_k_1 = self.attend(
+                ini_env_context, torch.cat((h, z_k_c), 1), self.W_s_b_1)
+            z_s_1_k_2 = self.attend(
+                ini_env_context, torch.cat((h, z_k_c), 1), self.W_s_b_2)
+            z_s_1_k = torch.cat((z_s_1_k_1, z_s_1_k_2), -1)
+            z_s_k_k_1 = self.attend(
+                current_env_context, torch.cat((h, z_k_c), 1), self.W_s_c_1)
+            z_s_k_k_2 = self.attend(
+                current_env_context, torch.cat((h, z_k_c), 1), self.W_s_c_2)
+            z_s_k_k = torch.cat((z_s_k_k_1, z_s_k_k_2), -1)
+            phi_action_i = X.permute(1, 0, 2)[i]
+            h_k_1 = torch.cat(
+                (z_k_c, z_k_p, z_s_1_k, z_s_k_k, phi_action_i), -1)
+            h_k = tanh(self.W_b_d(h_k_1))
+            h, c = self.lstm(h_k, (h, c))
             output.append(h)
         output = torch.stack(output, dim=0)
         output = output.permute(1, 0, 2)

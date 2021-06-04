@@ -121,12 +121,12 @@ class dataloader():
         ini_env = self.replace_world_state(ini_env)
         data_length = len(ins)
         for i in range(data_length):
-            ins[i] = torch.tensor([ins[i]], dtype=torch.long).to(device)
-            ini_env[i] = torch.tensor([ini_env[i]], dtype=torch.long).to(device)
+            ins[i] = torch.tensor([ins[i]], dtype=torch.long, device=device)
+            ini_env[i] = torch.tensor([ini_env[i]], dtype=torch.long, device=device)
             if i % NUM_SEQUENCE == 0:
-                his[i] = torch.tensor([[0]], dtype=torch.long).to(device)
+                his[i] = torch.tensor([[0]], dtype=torch.long, device=device)
             else:
-                his[i] = torch.tensor([his[i]], dtype=torch.long).to(device)
+                his[i] = torch.tensor([his[i]], dtype=torch.long, device=device)
         return ins, his, ini_env
     
     def process_raw_ws(self, ws):
@@ -140,7 +140,20 @@ class dataloader():
             for i in beaker_color:
                 beaker_color_id.append(color_to_id[i])
             single_ws = single_ws + pos + beaker_color_id
-        return torch.tensor([single_ws], dtype=torch.long)
+        return torch.tensor([single_ws], dtype=torch.long, device=device)
+    
+    def process_pred_ws(self, ws):
+        ws = ws.split(" ")
+        single_ws = []
+        for j in ws:
+            pos_color = j.split(":")
+            pos = [int(pos_color[0]) - 1]
+            beaker_color = pos_color[1][:NUM_CHEMICAL_LAYERS] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))
+            beaker_color_id = []
+            for i in beaker_color:
+                beaker_color_id.append(color_to_id[i])
+            single_ws = single_ws + beaker_color_id
+        return torch.tensor([single_ws], dtype=torch.long, device=device)
 
     def replace_world_state(self, world_state):
         splitted_world_state = []
@@ -148,7 +161,8 @@ class dataloader():
             single_world_state = []
             for j in i:
                 if j >= "0" and j <= "9":
-                    single_world_state.append(int(j))
+                    # single_world_state.append(int(j))
+                    continue
                 else:
                     single_world_state.extend([color_to_id[t] for t in j])
             splitted_world_state.append(single_world_state)
@@ -163,7 +177,8 @@ class dataloader():
                 pos_color = j.split(":")
                 pos = [pos_color[0]]
                 beaker_color = [pos_color[1] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))]
-                single_ws = single_ws + pos + beaker_color
+                # single_ws = single_ws + pos + beaker_color
+                single_ws = single_ws + beaker_color
             process_world_state.append(single_ws)
         return process_world_state
 

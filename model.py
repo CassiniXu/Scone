@@ -38,12 +38,8 @@ class world_state_encoder(nn.Module):
         beaker_id = beaker_id.repeat((batch_size, 1)).to(device)
         beaker_id = self.pos_embedding(beaker_id)
         world_state = None
-        all_colors = []
-        for i in range(batch_size):
-            for j in range(0, X.shape[1], 5):
-                all_colors.append(self.color_embedding(X[i][j+1:j+5]))
-        all_colors = torch.stack(all_colors, dim=0)
-        _, (encoded_color, _) = self.lstm(all_colors) # batch_size*NUM_POS x hidden
+        all_colors = self.color_embedding(torch.reshape(X, (-1, NUM_CHEMICAL_LAYERS)))
+        _, (encoded_color, _) = self.lstm(all_colors)
         encoded_color = torch.reshape(encoded_color, (batch_size, NUM_POS, -1)).to(device)
         context = torch.cat((beaker_id, encoded_color), dim=2)
         return context
@@ -219,33 +215,27 @@ class Seq2Seq(nn.Module):
 
     def recover_ws(self, ws):
         str_ws = ""
-        for i in range(0, len(ws), 5):
+        for i in range(0, len(ws), NUM_CHEMICAL_LAYERS):
             str_ws += " "
-            str_ws += str(ws[i] + 1)
+            str_ws += str(int(i / NUM_CHEMICAL_LAYERS) + 1)
             str_ws += ":"
-            str_ws += id_to_color[ws[i+1]]
-
+            str_ws += id_to_color[ws[i]]
+            if id_to_color[ws[i+1]] != "_":
+                str_ws += id_to_color[ws[i+1]]
+            else:
+                continue
             if id_to_color[ws[i+2]] != "_":
                 str_ws += id_to_color[ws[i+2]]
             else:
                 continue
-            
             if id_to_color[ws[i+3]] != "_":
                 str_ws += id_to_color[ws[i+3]]
             else:
                 continue
-            
-            if id_to_color[ws[i+4]] != "_":
-                str_ws += id_to_color[ws[i+4]]
-            else:
-                continue
-
-
         return str_ws[1:]
 
     def predict(self, ins, his, ini_env, act_ix, ix_act, DL, max_act_len = 8):
         data_length = len(ins)
-
         # initial of the environment
         curr_env = ini_env[0]
         pred_act = START
@@ -268,15 +258,11 @@ class Seq2Seq(nn.Module):
                 pred_count += 1
                 if pred_count >= max_act_len:
                     break
-            print("prediction:" + str(index) + " complete.")
             act_sequence = self.clean_action(act_sequence)
-            print(act_sequence)
             ws = AlchemyWorldState(ws).execute_seq(act_sequence).__str__()
-            print(ws)
             ws = self.clean_ws(ws)
-            print(ws)
             all_ws.append(ws)
-            curr_env = DL.process_raw_ws(ws)
+            curr_env = DL.process_pred_ws(ws)
         print("Prediction complete.")
         return all_ws
 
@@ -332,13 +318,13 @@ def main():
 
     model = Seq2Seq(vocab_size, action_size, ins_hidden_size, ins_embedding_size, act_embedding_size, act_input_size, act_hidden_size, pos_embedding_size, color_embedding_size, color_hidden_size)
     model.to(device)
-    epoch = 8
+    epoch = 15
     learning_rate = 0.001
     model.train(train_loader, batch_size, epoch, learning_rate)
     dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
     result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
-    result_ins_file = "dev_instruction_pred_18.csv"
-    result_inter_file = "dev_inter_pred_18.csv"
+    result_ins_file = "dev_instruction_pred.csv"
+    result_inter_file = "dev_inter_pred.csv"
     save_output(result, dev_id, result_ins_file, result_inter_file)
 
 

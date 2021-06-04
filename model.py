@@ -34,10 +34,9 @@ class world_state_encoder(nn.Module):
     
     def forward(self, X):
         batch_size = X.shape[0]
-        beaker_id = torch.tensor([[0, 1, 2, 3, 4, 5, 6]], dtype=torch.long)
-        beaker_id = beaker_id.repeat((batch_size, 1)).to(device)
+        beaker_id = torch.tensor([[0, 1, 2, 3, 4, 5, 6]], dtype=torch.long, device=device)
+        beaker_id = beaker_id.repeat((batch_size, 1))
         beaker_id = self.pos_embedding(beaker_id)
-        world_state = None
         all_colors = self.color_embedding(torch.reshape(X, (-1, NUM_CHEMICAL_LAYERS)))
         _, (encoded_color, _) = self.lstm(all_colors)
         encoded_color = torch.reshape(encoded_color, (batch_size, NUM_POS, -1)).to(device)
@@ -51,11 +50,8 @@ class instruction_encoder(nn.Module):
         self.lstm = nn.LSTM(embedded_size, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=bidirectional)
 
     def forward(self, X, valid_length=None, is_predict=False):
-        if is_predict:
-            X = self.embedding(X)
-            output, (_, _) = self.lstm(X)
-            return output
         X = self.embedding(X)
+        if is_predict: return self.lstm(X)[0]
         X = pack_padded_sequence(X, valid_length.to(torch.device("cpu")), batch_first=True, enforce_sorted=False)
         packed_output, (_, _) = self.lstm(X)
         output, input_sizes = pad_packed_sequence(packed_output, batch_first=True)
@@ -100,8 +96,7 @@ class attention_action_decoder(nn.Module):
         c_zeros = torch.zeros(batch_size, self.hidden_size, device = device)
         return h_zeros, c_zeros
 
-    def forward(self, ins, his, actions, current_env_context, ini_env_context, ins_valid, teacher_force=True):
-        # lstm output: batch_size, seq_len, num_directions*hidden_size
+    def forward(self, ins, his, actions, current_env_context, ini_env_context, teacher_force=True):
         X = self.embedding(actions.to(device))
         batch_size = ins.shape[0]
         h, c = self.init_hidden(batch_size)
@@ -176,7 +171,7 @@ class Seq2Seq(nn.Module):
                 his_out = self.encoder(his_ins, his_valid)
                 ini_env_context = self.env_encoder(ini_env)
                 current_env_context = self.env_encoder(current_env)
-                pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, ins_valid, teacher_force=True)
+                pred = self.decoder(ins_out, his_out, act_id, current_env_context, ini_env_context, teacher_force=True)
                 l = loss_function(pred, y_true.to(device), y_true_valid)
                 l.sum().backward()
                 if step % 20 == 0:
@@ -253,7 +248,7 @@ class Seq2Seq(nn.Module):
             pred_count = 0
             while pred_act != EOS:
                 pred_act = torch.tensor([[act_ix[pred_act]]], dtype=torch.long)
-                pred_act = ix_act[self.decoder(encoded_ins, encoded_his, pred_act, encoded_curr, encoded_ini, None, teacher_force=False).item()]
+                pred_act = ix_act[self.decoder(encoded_ins, encoded_his, pred_act, encoded_curr, encoded_ini, teacher_force=False).item()]
                 act_sequence.append(pred_act)
                 pred_count += 1
                 if pred_count >= max_act_len:
@@ -263,7 +258,7 @@ class Seq2Seq(nn.Module):
             ws = self.clean_ws(ws)
             all_ws.append(ws)
             curr_env = DL.process_pred_ws(ws)
-        print("Prediction complete.")
+        print("Predictions complete.")
         return all_ws
 
 
@@ -323,8 +318,8 @@ def main():
     model.train(train_loader, batch_size, epoch, learning_rate)
     dev_ins, dev_his, dev_ini_env, dev_id = DL.dev_data()
     result = model.predict(dev_ins, dev_his, dev_ini_env, DL.actions_to_id, DL.id_to_actions, DL, max_act_len=8)
-    result_ins_file = "dev_instruction_pred.csv"
-    result_inter_file = "dev_inter_pred.csv"
+    result_ins_file = "dev_instruction_pred_1.csv"
+    result_inter_file = "dev_inter_pred_1.csv"
     save_output(result, dev_id, result_ins_file, result_inter_file)
 
 

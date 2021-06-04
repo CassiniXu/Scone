@@ -14,6 +14,9 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 import os
 import pandas as pd
 
+NUM_COLORS = 7
+NUM_POS = 7
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -25,28 +28,24 @@ class world_state_encoder(nn.Module):
         self.color_embedded_dim = color_embedded_dim
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
-        self.color_embedding = nn.Embedding(7, self.color_embedded_dim)
-        self.pos_embedding = nn.Embedding(8, self.pos_embedded_dim)
+        self.color_embedding = nn.Embedding(NUM_COLORS, self.color_embedded_dim)
+        self.pos_embedding = nn.Embedding(NUM_POS, self.pos_embedded_dim)
         self.lstm = nn.LSTM(self.color_embedded_dim, self.hidden_dim, num_layers=self.num_layers, batch_first=True)
     
     def forward(self, X):
         batch_size = X.shape[0]
-        beaker_id = torch.tensor([[1, 2, 3, 4, 5, 6, 7]], dtype=torch.long)
+        beaker_id = torch.tensor([[0, 1, 2, 3, 4, 5, 6]], dtype=torch.long)
         beaker_id = beaker_id.repeat((batch_size, 1)).to(device)
         beaker_id = self.pos_embedding(beaker_id)
         world_state = None
-        all_colors = None
+        all_colors = []
         for i in range(batch_size):
-            colors = None
             for j in range(0, X.shape[1], 5):
-                max_len = len([int(t) for t in X[i][j+1:j+5] if int(t) != 0])
-                if max_len == 0: max_len = 1
-                processed_color = self.color_embedding(X[i][j+1:j+5][:max_len]).reshape((1, max_len, -1))
-                _, (encoded_color, _) = self.lstm(processed_color) # 1 x 1 x hidden
-                colors = encoded_color if j == 0 else torch.cat((colors, encoded_color), dim=1)
-            all_colors = colors if i == 0 else torch.cat((all_colors, colors), dim=0)
-        all_colors = all_colors.to(device)
-        context = torch.cat((beaker_id, all_colors), dim=2)
+                all_colors.append(self.color_embedding(X[i][j+1:j+5]))
+        all_colors = torch.stack(all_colors, dim=0)
+        _, (encoded_color, _) = self.lstm(all_colors) # batch_size*NUM_POS x hidden
+        encoded_color = torch.reshape(encoded_color, (batch_size, NUM_POS, -1)).to(device)
+        context = torch.cat((beaker_id, encoded_color), dim=2)
         return context
 
 class instruction_encoder(nn.Module):
@@ -94,8 +93,8 @@ class attention_action_decoder(nn.Module):
         weight: 2 * ins_hidden x hidden
         query:  batch_size x hidden
         """
-        H_ = torch.matmul(H, weight)
-        alpha_bar = torch.einsum('ijk, ik -> ij', [H_, query])
+        H_w = torch.matmul(H, weight)
+        alpha_bar = torch.einsum('ijk, ik -> ij', [H_w, query])
         alpha = nn.Softmax(1)(alpha_bar)
         c = torch.einsum('ijk, ij -> ik', [H, alpha])
         return c
@@ -308,8 +307,8 @@ def main():
     train = "train.json"
     dev = "dev.json"
     test = "test_leaderboard.json"
-    batch_size = 32
-    num_filter = 1
+    batch_size = 32 * NUM_SEQUENCE
+    num_filter = 2
     DL = dataloader(train, dev, test, batch_size, num_filter)
     train_loader = DL.train_loader()
 

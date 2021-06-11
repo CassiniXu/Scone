@@ -8,8 +8,8 @@ PAD = "<PAD>"
 START = "<START>"
 NUM_SEQUENCE = 5
 NUM_CHEMICAL_LAYERS = 4
-color_to_id = {"_": 0, "y": 1, "o": 2, "g": 3, "r": 4, "b": 5, "p": 6}
-id_to_color = {0: "_", 1: "y", 2: "o", 3: "g", 4: "r", 5: "b", 6: "p"}
+color_to_id = {"_": 0, "y": 1, "o": 2, "r": 3, "g": 4, "b": 5, "p": 6}
+id_to_color = {v:k for k, v in color_to_id.items()}
 import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -129,25 +129,11 @@ class dataloader():
                 his[i] = torch.tensor([his[i]], dtype=torch.long, device=device)
         return ins, his, ini_env
     
-    def process_raw_ws(self, ws):
+    def pad_ws(self, ws):
         ws = ws.split(" ")
         single_ws = []
         for j in ws:
             pos_color = j.split(":")
-            pos = [int(pos_color[0]) - 1]
-            beaker_color = pos_color[1][:NUM_CHEMICAL_LAYERS] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))
-            beaker_color_id = []
-            for i in beaker_color:
-                beaker_color_id.append(color_to_id[i])
-            single_ws = single_ws + pos + beaker_color_id
-        return torch.tensor([single_ws], dtype=torch.long, device=device)
-    
-    def process_pred_ws(self, ws):
-        ws = ws.split(" ")
-        single_ws = []
-        for j in ws:
-            pos_color = j.split(":")
-            pos = [int(pos_color[0]) - 1]
             beaker_color = pos_color[1][:NUM_CHEMICAL_LAYERS] + "_" * (NUM_CHEMICAL_LAYERS - len(pos_color[1]))
             beaker_color_id = []
             for i in beaker_color:
@@ -161,7 +147,6 @@ class dataloader():
             single_world_state = []
             for j in i:
                 if j >= "0" and j <= "9":
-                    # single_world_state.append(int(j))
                     continue
                 else:
                     single_world_state.extend([color_to_id[t] for t in j])
@@ -274,7 +259,6 @@ class dataloader():
         train_data = TensorDataset(ins.to(device), his_ins.to(device), ins_valid.to(device), his_valid.to(device), ini_env.to(device), current_env.to(device), act_id.to(device), valid_act.to(device), ground_act_id_pad.to(device), ground_act_id_pad_valid_length.to(device))
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size = self.batch_size)
-        train_dataloader = DataLoader(train_data, batch_size = self.batch_size)
         return train_dataloader
 
 if __name__ == "__main__":
@@ -284,8 +268,30 @@ if __name__ == "__main__":
     DL = dataloader(train, dev, test)
     dl = DL.train_loader()
     for step, batch in enumerate(dl):
+        if step != 0:
+            continue
         batch = tuple(t.to(device) for t in batch)
         ins, his_ins, ins_valid, his_valid, ini_env, current_env, act_id, valid_act, y_true, y_true_valid = batch
-        print(ini_env[:10])
-        print(current_env[:10])
+
+        # print(ini_env[:10])
+        # print(current_env[:10])
+        # print(act_id)
+        # print(y_true)
+        # # print(valid_act)
+        # for i,j in zip(act_id, y_true):
+        #     for m in i:
+        #         print(DL.id_to_actions[int(m)], end=" ")
+        #     print()
+        #     for n in j:
+        #         print(DL.id_to_actions[int(n)], end=" ")
+        #     print()
+        # print(valid_act)
+        print(current_env)
+        for i in current_envs:
+            for index, j in enumerate(i):
+                if index%4 == 3:
+                    print(id_to_color[int(j)], end=" | ")
+                    continue
+                print(id_to_color[int(j)], end=" ")
+            print()
         break
